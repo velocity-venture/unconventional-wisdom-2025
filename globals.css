@@ -1,0 +1,259 @@
+/* =============================================================================
+   Z2Q INITIATIVE - GLOBAL STYLES
+   Brand: Unconventional Wisdom | Aesthetic: Quiet Luxury
+   ============================================================================= */
+
+/* Google Fonts Import - Playfair Display + DM Sans + JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+   BASE LAYER - Root variables and element resets
+   ============================================================================= */
+@layer base {
+  :root {
+    /* Color Variables (CSS Custom Properties for runtime access) */
+    --color-obsidian: #1A1A1B;
+    --color-obsidian-light: #222223;
+    --color-obsidian-dark: #0F0F10;
+    
+    --color-charcoal: #2D2D2E;
+    --color-charcoal-light: #3A3A3B;
+    --color-charcoal-dark: #232324;
+    
+    --color-gold: #D4AF37;
+    --color-gold-light: #E5C45C;
+    --color-gold-dark: #B8962F;
+    
+    --color-ivory: #F5F5F0;
+    --color-ivory-warm: #FAF8F2;
+    
+    /* Typography */
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-body: 'DM Sans', 'Helvetica Neue', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    
+    /* Spacing Scale */
+    --space-unit: 0.25rem;
+    
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-base: 250ms ease;
+    --transition-slow: 400ms ease;
+  }
+  
+  /* HTML & Body */
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    @apply bg-obsidian text-ivory font-body;
+    font-feature-settings: 'kern' 1, 'liga' 1;
+  }
+  
+  /* Typography Defaults */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-semibold text-ivory;
+  }
+  
+  h1 { @apply text-display-xl; }
+  h2 { @apply text-display-lg; }
+  h3 { @apply text-display; }
+  h4 { @apply text-headline; }
+  h5 { @apply text-subhead; }
+  h6 { @apply text-body-lg font-semibold; }
+  
+  p {
+    @apply text-body text-ivory/80;
+  }
+  
+  /* Links */
+  a {
+    @apply text-gold transition-colors duration-200;
+  }
+  
+  a:hover {
+    @apply text-gold-light;
+  }
+  
+  /* Selection */
+  ::selection {
+    @apply bg-gold/30 text-ivory;
+  }
+  
+  /* Scrollbar Styling (Webkit) */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-obsidian;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-charcoal rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-charcoal-light;
+  }
+  
+  /* Focus States */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-gold ring-offset-2 ring-offset-obsidian;
+  }
+}
+
+/* =============================================================================
+   COMPONENTS LAYER - Reusable UI patterns
+   ============================================================================= */
+@layer components {
+  /* Button: Primary (Gold) */
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-6 py-3;
+    @apply bg-gold text-obsidian font-semibold;
+    @apply rounded-card transition-all duration-200;
+    @apply hover:bg-gold-light hover:shadow-glow-gold;
+    @apply active:scale-[0.98];
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  /* Button: Secondary (Outline) */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-6 py-3;
+    @apply bg-transparent text-gold font-semibold;
+    @apply border border-gold/50 rounded-card;
+    @apply transition-all duration-200;
+    @apply hover:border-gold hover:bg-gold/5;
+    @apply active:scale-[0.98];
+  }
+  
+  /* Button: Ghost */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center px-4 py-2;
+    @apply bg-transparent text-ivory/70 font-medium;
+    @apply rounded-card transition-all duration-200;
+    @apply hover:text-ivory hover:bg-charcoal/50;
+  }
+  
+  /* Card: Base */
+  .card {
+    @apply bg-charcoal/30 rounded-panel border border-charcoal;
+    @apply transition-all duration-200;
+    @apply hover:border-charcoal-light;
+  }
+  
+  /* Card: Elevated */
+  .card-elevated {
+    @apply bg-obsidian rounded-panel border border-charcoal;
+    @apply shadow-card transition-all duration-200;
+    @apply hover:shadow-elevated hover:border-gold/20;
+  }
+  
+  /* Card: Gold Accent */
+  .card-gold {
+    @apply bg-gradient-to-b from-gold/10 to-transparent;
+    @apply rounded-panel border border-gold/30;
+    @apply transition-all duration-200;
+    @apply hover:border-gold/50;
+  }
+  
+  /* Input: Base */
+  .input {
+    @apply w-full bg-charcoal/50 border border-charcoal rounded-card;
+    @apply px-4 py-3 text-ivory placeholder:text-ivory/30;
+    @apply transition-colors duration-200;
+    @apply focus:border-gold focus:outline-none;
+  }
+  
+  /* Badge: Gold */
+  .badge-gold {
+    @apply inline-flex items-center px-3 py-1;
+    @apply bg-gold/10 text-gold text-caption font-medium;
+    @apply rounded-full border border-gold/20;
+  }
+  
+  /* Divider: Horizontal */
+  .divider {
+    @apply w-full h-px bg-charcoal;
+  }
+  
+  /* Divider: Gold Accent */
+  .divider-gold {
+    @apply w-16 h-0.5 bg-gradient-to-r from-gold to-transparent;
+  }
+  
+  /* Section: Standard padding */
+  .section {
+    @apply py-24 px-6;
+  }
+  
+  /* Container: Max-width with padding */
+  .container-narrow {
+    @apply max-w-4xl mx-auto px-6;
+  }
+  
+  .container-wide {
+    @apply max-w-6xl mx-auto px-6;
+  }
+  
+  .container-full {
+    @apply max-w-7xl mx-auto px-6;
+  }
+  
+  /* Text: Overline (small caps label) */
+  .text-overline {
+    @apply text-gold tracking-[0.2em] text-xs font-medium uppercase;
+  }
+  
+  /* Gradient: Text Gold */
+  .text-gradient-gold {
+    @apply bg-gradient-to-r from-gold via-gold-light to-gold;
+    @apply bg-clip-text text-transparent;
+  }
+}
+
+/* =============================================================================
+   UTILITIES LAYER - Custom utility classes
+   ============================================================================= */
+@layer utilities {
+  /* Animation Delays */
+  .animation-delay-100 { animation-delay: 100ms; }
+  .animation-delay-200 { animation-delay: 200ms; }
+  .animation-delay-300 { animation-delay: 300ms; }
+  .animation-delay-400 { animation-delay: 400ms; }
+  .animation-delay-500 { animation-delay: 500ms; }
+  
+  /* Text Balance */
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  /* Hide Scrollbar */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Glass Effect */
+  .glass {
+    @apply bg-obsidian/80 backdrop-blur-md;
+  }
+  
+  /* Gold Glow */
+  .glow-gold {
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.2),
+                0 0 40px rgba(212, 175, 55, 0.1);
+  }
+}
