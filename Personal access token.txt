@@ -1,0 +1,3 @@
+Personal access token
+
+/velocity-venture/unconventional-wisdom-2025.git=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

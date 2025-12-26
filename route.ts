@@ -1,452 +1,319 @@
 // =============================================================================
-// STRIPE WEBHOOK HANDLER (Next.js 15 / App Router)
-// Endpoint: https://uw.sayada.ai/z2q/api/webhooks/stripe
-// =============================================================================
-// CRITICAL: Uses request.text() for raw body - NEVER use request.json()
+// Z2Q AI TUTOR API ROUTE
+// Frontend URL: https://uw.sayada.ai/z2q/api/tutor
+// Proxies to n8n: http://72.62.82.174/zero2quantum
+// Prevents "Specialization Drift" - Foundation students stay on Foundation topics
 // =============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import Stripe from 'stripe';
-import { generateWelcomeEmailHtml } from '@/components/WelcomeEmail';
-import { Z2Q_URLS } from '@/lib/urls';
+
+// n8n VPS webhook endpoint (configurable via environment)
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://72.62.82.174/zero2quantum';
 
 // =============================================================================
-// CONFIGURATION (Sandbox Credentials for Smoke Test)
+// DRIFT DETECTION: Topics that are OFF-LIMITS for Foundation (Level 0) students
 // =============================================================================
+const SPECIALIZATION_KEYWORDS = {
+  legal: [
+    'patent', 'ip law', 'intellectual property', 'quantum patent gap',
+    'regulatory', 'compliance', 'hndl', 'harvest now decrypt later',
+    'fiduciary', 'liability', 'wassenaar', 'export control'
+  ],
+  finance: [
+    'monte carlo', 'portfolio optimization', 'qubo', 'derivatives pricing',
+    'high-frequency trading', 'fraud detection', 'credit scoring', 'qsvm'
+  ],
+  cybersecurity: [
+    'shor\'s algorithm', 'rsa breaking', 'post-quantum cryptography', 'pqc',
+    'nist standards', 'qkd', 'quantum key distribution', 'q-day',
+    'cryptographically relevant quantum'
+  ],
+  pharmaceuticals: [
+    'molecular hamiltonian', 'drug discovery', 'protein folding', 'vqe docking',
+    'genomic', 'clinical trial', 'personalized medicine'
+  ],
+  machine_learning: [
+    'qnn', 'quantum neural network', 'quantum boltzmann', 'qml advanced',
+    'quantum nlp', 'edge quantum ai', 'quantum generative'
+  ],
+  logistics: [
+    'tsp quantum', 'qaoa', 'fleet optimization', 'quantum annealing',
+    'supply chain quantum', 'bin-packing quantum'
+  ],
+};
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-11-20.acacia', // Latest 2025 API version
-});
-
-// Environment Variables
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-
-// Z2Q Product/Price IDs
-const Z2Q_PRICE_ID = 'price_1Si3mNI3wsIEE2uCkXfbxAvJ';
-const Z2Q_PRODUCT_ID = 'prod_TfOZoziWZb6QYG';
-
-// Initialize Supabase Admin Client (bypasses RLS)
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
+// Foundation topics that ARE appropriate for Level 0 students
+const FOUNDATION_TOPICS = [
+  'python', 'linear algebra', 'matrix', 'vector', 'probability',
+  'qubit', 'superposition', 'entanglement', 'quantum gate', 'hadamard',
+  'cnot', 'pauli', 'circuit', 'measurement', 'deutsch', 'grover',
+  'qiskit', 'ibm quantum', 'basics', 'fundamentals', 'beginner',
+  'what is quantum', 'how does quantum', 'explain quantum'
+];
 
 // =============================================================================
-// WEBHOOK HANDLER
+// DRIFT DETECTION FUNCTION
 // =============================================================================
-
-export async function POST(request: NextRequest) {
-  // ===========================================================================
-  // STEP 1: Capture RAW Body (CRITICAL - Do NOT use request.json())
-  // ===========================================================================
-  
-  const body = await request.text();
-  const signature = request.headers.get('stripe-signature');
-
-  if (!signature) {
-    console.error('[Stripe Webhook] Missing stripe-signature header');
-    return NextResponse.json(
-      { error: 'Missing stripe-signature header' },
-      { status: 400 }
-    );
+function detectSpecializationDrift(
+  message: string,
+  knowledgeLevel: string
+): { isDrifting: boolean; topic: string | null } {
+  // Level 1 and 2 students can ask anything
+  if (knowledgeLevel !== '0') {
+    return { isDrifting: false, topic: null };
   }
 
-  // ===========================================================================
-  // STEP 2: Verify Stripe Signature
-  // ===========================================================================
-  
-  let event: Stripe.Event;
+  const lowerMessage = message.toLowerCase();
 
-  try {
-    event = stripe.webhooks.constructEvent(
-      body,
-      signature,
-      STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[Stripe Webhook] Signature verification failed:', message);
-    return NextResponse.json(
-      { error: `Webhook signature verification failed: ${message}` },
-      { status: 400 }
-    );
-  }
-
-  // ===========================================================================
-  // STEP 3: Acknowledge Receipt Immediately
-  // Return 200 early to prevent Stripe timeout (Stripe expects response < 10s)
-  // ===========================================================================
-  
-  console.log(`[Stripe Webhook] Received event: ${event.type} (${event.id})`);
-
-  // ===========================================================================
-  // STEP 4: Handle Event Types
-  // ===========================================================================
-
-  try {
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        
-        // Verify payment was successful
-        if (session.payment_status !== 'paid') {
-          console.log(`[Stripe Webhook] Payment not completed: ${session.payment_status}`);
-          return NextResponse.json({ 
-            received: true, 
-            status: 'payment_pending',
-            payment_status: session.payment_status,
-          });
-        }
-
-        // Process the successful checkout
-        const result = await handleCheckoutCompleted(session);
-        return NextResponse.json({ received: true, ...result });
+  // Check each specialization category
+  for (const [category, keywords] of Object.entries(SPECIALIZATION_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (lowerMessage.includes(keyword.toLowerCase())) {
+        return { isDrifting: true, topic: category };
       }
-
-      case 'checkout.session.async_payment_succeeded': {
-        // Handle delayed payment methods (bank transfers, etc.)
-        const session = event.data.object as Stripe.Checkout.Session;
-        const result = await handleCheckoutCompleted(session);
-        return NextResponse.json({ received: true, ...result });
-      }
-
-      case 'checkout.session.async_payment_failed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        console.log(`[Stripe Webhook] Async payment failed: ${session.id}`);
-        // Could update enrollment status to 'payment_failed'
-        return NextResponse.json({ received: true, status: 'payment_failed' });
-      }
-
-      case 'charge.refunded': {
-        const charge = event.data.object as Stripe.Charge;
-        await handleRefund(charge);
-        return NextResponse.json({ received: true, status: 'refund_processed' });
-      }
-
-      default:
-        // Acknowledge unknown events (don't fail)
-        console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
-        return NextResponse.json({ received: true, status: 'unhandled_event' });
     }
+  }
+
+  return { isDrifting: false, topic: null };
+}
+
+// =============================================================================
+// GENERATE REDIRECT RESPONSE
+// =============================================================================
+function generateRedirectResponse(topic: string, currentLesson: string): string {
+  const topicLabels: Record<string, string> = {
+    legal: 'Quantum IP & Patent Law',
+    finance: 'Quantum Finance & Risk',
+    cybersecurity: 'Post-Quantum Cryptography',
+    pharmaceuticals: 'Quantum Drug Discovery',
+    machine_learning: 'Quantum Machine Learning',
+    logistics: 'Quantum Logistics Optimization',
+  };
+
+  const currentMonthMatch = currentLesson.match(/month-(\d)/);
+  const currentMonth = currentMonthMatch ? parseInt(currentMonthMatch[1]) : 1;
+
+  const redirectMessages = [
+    `Great question! That topic falls under **${topicLabels[topic]}**, which is covered in your Specialization phase (Months 7-12). For now, let's focus on building the foundation you'll need to truly understand it.`,
+    
+    `I appreciate your curiosity about ${topicLabels[topic]}! That's actually Month 7+ material. The good news? The linear algebra and quantum circuit concepts you're learning *right now* are exactly what you'll need to master those advanced topics later.`,
+    
+    `That's a fantastic topic — and it's waiting for you in the Specialization phase! Right now in Month ${currentMonth}, we're building the mathematical and computational foundation that makes those advanced applications possible.`,
+  ];
+
+  // Select a response based on some variety
+  const response = redirectMessages[Math.floor(Math.random() * redirectMessages.length)];
+
+  // Add contextual foundation guidance
+  const foundationGuidance = getFoundationGuidance(currentMonth);
+
+  return `${response}\n\n${foundationGuidance}\n\nWhat would you like to explore about these foundational concepts?`;
+}
+
+// =============================================================================
+// FOUNDATION GUIDANCE BY MONTH
+// =============================================================================
+function getFoundationGuidance(month: number): string {
+  const guidance: Record<number, string> = {
+    1: `**Month 1 Focus:** Right now, your priority is Python fluency and linear algebra basics. These aren't just prerequisites — they're the *language* of quantum computing. A vector isn't just math; it's how we represent a qubit's state.`,
+    
+    2: `**Month 2 Focus:** You're learning what qubits actually *are*. Superposition isn't magic — it's a mathematical state we can describe precisely with the linear algebra you just learned. This is where theory meets reality.`,
+    
+    3: `**Month 3 Focus:** Quantum gates are your building blocks. Every advanced algorithm — from breaking encryption to optimizing portfolios — is built from these same gates you're mastering now.`,
+    
+    4: `**Month 4 Focus:** Deutsch-Jozsa and Grover's algorithms are your first taste of quantum advantage. Understanding *why* they work is more important than memorizing the circuits.`,
+    
+    5: `**Month 5 Focus:** Qiskit is your tool for making quantum real. Running circuits on IBM's actual quantum computers transforms abstract concepts into tangible results.`,
+    
+    6: `**Month 6 Focus:** You're preparing for the specialization phase. The industry landscape, career positioning, and your capstone project will determine which track you pursue next.`,
+  };
+
+  return guidance[month] || guidance[1];
+}
+
+// =============================================================================
+// CONSTRUCT FOUNDATION-AWARE PROMPT
+// =============================================================================
+function constructFoundationPrompt(
+  message: string,
+  currentLesson: string,
+  knowledgeLevel: string
+): string {
+  const currentMonthMatch = currentLesson.match(/m(\d)/);
+  const currentMonth = currentMonthMatch ? parseInt(currentMonthMatch[1]) : 1;
+
+  const monthContext: Record<number, string> = {
+    1: 'Python programming basics, linear algebra (vectors, matrices, matrix multiplication), and probability/statistical thinking',
+    2: 'IBM Quantum Learning Platform, understanding qubits, superposition, and entanglement from a computational (not physics) perspective',
+    3: 'Quantum gates (X, Y, Z, Hadamard, CNOT), building quantum circuits, and understanding measurement',
+    4: 'Deutsch-Jozsa algorithm, Grover\'s search algorithm, and introduction to VQE',
+    5: 'Deep Qiskit proficiency, running on real IBM quantum hardware, and building original projects',
+    6: 'The quantum ecosystem (IBM, Google, Microsoft), career positioning, and Foundation capstone',
+  };
+
+  return `You are the Z2Q Academic Proctor — a Socratic AI tutor for quantum computing education.
+
+CURRENT CONTEXT:
+- Student Knowledge Level: ${knowledgeLevel} (Level 0 = Foundation phase)
+- Current Month: ${currentMonth}
+- Month ${currentMonth} Topics: ${monthContext[currentMonth] || monthContext[1]}
+- Current Lesson: ${currentLesson}
+
+YOUR ROLE:
+You are teaching FOUNDATION concepts (Months 1-6). Your job is to help this student build the mathematical and computational prerequisites for quantum computing.
+
+TEACHING APPROACH:
+1. Use simple language (8th grade reading level)
+2. Use metaphors and real-world examples
+3. Ask Socratic questions to check understanding
+4. Guide students to external resources (IBM Quantum Learning, Qiskit Textbook, Khan Academy) rather than replacing them
+5. Be encouraging but maintain academic rigor
+
+CONSTRAINT: This student is in the Foundation phase. If they ask about advanced specialization topics (Quantum IP law, Post-Quantum Cryptography, Drug Discovery, etc.), gently acknowledge their curiosity but redirect them to the foundational concepts they need to master FIRST.
+
+STUDENT'S QUESTION:
+${message}
+
+Respond in a helpful, Socratic manner. Keep responses concise (2-3 paragraphs max). End with a guiding question when appropriate.`;
+}
+
+// =============================================================================
+// API ROUTE HANDLER
+// =============================================================================
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { student_id, current_lesson, message, knowledge_level } = body;
+
+    // Validate required fields
+    if (!student_id || !message) {
+      return NextResponse.json(
+        { error: 'Missing required fields: student_id, message' },
+        { status: 400 }
+      );
+    }
+
+    const knowledgeLevel = knowledge_level || '0';
+    const lesson = current_lesson || 'month-1';
+
+    // Check for specialization drift
+    const { isDrifting, topic } = detectSpecializationDrift(message, knowledgeLevel);
+
+    if (isDrifting && topic) {
+      // Return redirect response without hitting the AI
+      const redirectResponse = generateRedirectResponse(topic, lesson);
+      return NextResponse.json({
+        reply: redirectResponse,
+        suggested_action: 'focus_foundation',
+        credit_balance: 0,
+        drift_detected: true,
+        drift_topic: topic,
+      });
+    }
+
+    // Construct foundation-aware prompt
+    const prompt = constructFoundationPrompt(message, lesson, knowledgeLevel);
+
+    // Call n8n webhook (proxied through Cloudflare → Vercel → Hostinger VPS)
+    console.log(`[AI Tutor] Proxying to n8n: ${N8N_WEBHOOK_URL}`);
+    
+    const webhookResponse = await fetch(N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Z2Q-Source': 'uw.sayada.ai',
+        'X-Student-Level': knowledgeLevel,
+        'X-Request-Timestamp': new Date().toISOString(),
+      },
+      body: JSON.stringify({
+        student_id,
+        current_lesson: lesson,
+        message: prompt, // Send the enriched prompt
+        knowledge_level: knowledgeLevel,
+        timestamp: new Date().toISOString(),
+        source: 'z2q-frontend',
+      }),
+      // Timeout after 30 seconds (Claude can take time)
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!webhookResponse.ok) {
+      throw new Error(`Webhook error: ${webhookResponse.status}`);
+    }
+
+    const data = await webhookResponse.json();
+
+    return NextResponse.json({
+      reply: data.reply || data.response || 'I received your question. Let me think about that...',
+      suggested_action: data.suggested_action || 'continue',
+      credit_balance: data.credit_balance || 0,
+      drift_detected: false,
+    });
+
   } catch (error) {
-    console.error('[Stripe Webhook] Processing error:', error);
-    // Return 200 to prevent Stripe from retrying (we'll handle manually)
-    return NextResponse.json({ 
-      received: true, 
-      status: 'error_logged',
-      error: error instanceof Error ? error.message : 'Unknown error',
+    console.error('[AI Tutor] API error:', error);
+
+    // Handle timeout specifically
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      return NextResponse.json({
+        reply: `The AI is taking longer than expected. This might happen with complex questions. Please try a simpler question or try again in a moment.`,
+        suggested_action: 'simplify',
+        credit_balance: 0,
+        error: 'timeout',
+      });
+    }
+
+    // Return a graceful fallback
+    return NextResponse.json({
+      reply: `I'm having trouble connecting to the AI system right now. In the meantime, here are some resources for your current studies:
+
+• **IBM Quantum Learning**: https://learning.quantum.ibm.com/
+• **Qiskit Textbook**: https://qiskit.org/textbook
+• **Khan Academy Linear Algebra**: https://www.khanacademy.org/math/linear-algebra
+
+Try your question again in a moment!`,
+      suggested_action: 'retry',
+      credit_balance: 0,
+      error: true,
     });
   }
 }
 
 // =============================================================================
-// CHECKOUT COMPLETED HANDLER
+// GET: Health check for the tutor endpoint
+// Used to verify n8n connectivity
 // =============================================================================
 
-async function handleCheckoutCompleted(
-  session: Stripe.Checkout.Session
-): Promise<{ status: string; profile_id?: string; enrollment_id?: string }> {
-  
-  const sessionId = session.id;
-  const customerEmail = session.customer_details?.email;
-  const customerName = session.customer_details?.name || 'Scholar';
-  const stripeCustomerId = typeof session.customer === 'string' 
-    ? session.customer 
-    : session.customer?.id;
-  const amountPaid = session.amount_total ? session.amount_total / 100 : 997;
-
-  console.log(`[Checkout] Processing session ${sessionId} for ${customerEmail}`);
-
-  // ===========================================================================
-  // IDEMPOTENCY CHECK: Prevent Double Delivery
-  // ===========================================================================
-
-  const { data: existingEnrollment } = await supabaseAdmin
-    .from('enrollments')
-    .select('id, profile_id')
-    .eq('stripe_session_id', sessionId)
-    .maybeSingle();
-
-  if (existingEnrollment) {
-    console.log(`[Checkout] Session ${sessionId} already processed (idempotent)`);
-    return { 
-      status: 'already_processed', 
-      enrollment_id: existingEnrollment.id,
-      profile_id: existingEnrollment.profile_id,
-    };
-  }
-
-  // ===========================================================================
-  // VALIDATE EMAIL
-  // ===========================================================================
-
-  if (!customerEmail) {
-    console.error(`[Checkout] No email in session ${sessionId}`);
-    throw new Error('Customer email is required');
-  }
-
-  // ===========================================================================
-  // STEP 1: Create or Update Profile
-  // ===========================================================================
-
-  let profileId: string;
-
-  // Check for existing profile by email
-  const { data: existingProfile } = await supabaseAdmin
-    .from('profiles')
-    .select('id')
-    .eq('email', customerEmail)
-    .maybeSingle();
-
-  if (existingProfile) {
-    // Update existing profile
-    profileId = existingProfile.id;
-    
-    const { error: updateError } = await supabaseAdmin
-      .from('profiles')
-      .update({
-        full_name: customerName,
-        stripe_customer_id: stripeCustomerId,
-        knowledge_level: '0', // Reset/Set to Level 0 (Foundation)
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', profileId);
-
-    if (updateError) {
-      console.error(`[Checkout] Profile update error:`, updateError);
-      throw updateError;
-    }
-    
-    console.log(`[Checkout] Updated existing profile: ${profileId}`);
-  } else {
-    // Create new profile
-    const { data: newProfile, error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .insert({
-        email: customerEmail,
-        full_name: customerName,
-        knowledge_level: '0', // Start at Level 0 (Foundation)
-        specialization: null,
-        stripe_customer_id: stripeCustomerId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (profileError) {
-      // Handle unique constraint violation (race condition)
-      if (profileError.code === '23505') {
-        const { data: raceProfile } = await supabaseAdmin
-          .from('profiles')
-          .select('id')
-          .eq('email', customerEmail)
-          .single();
-        
-        if (raceProfile) {
-          profileId = raceProfile.id;
-          console.log(`[Checkout] Profile created in race condition: ${profileId}`);
-        } else {
-          throw profileError;
-        }
-      } else {
-        throw profileError;
-      }
-    } else {
-      profileId = newProfile.id;
-      console.log(`[Checkout] Created new profile: ${profileId}`);
-    }
-  }
-
-  // ===========================================================================
-  // STEP 2: Create Enrollment Record
-  // ===========================================================================
-
-  const { data: enrollment, error: enrollmentError } = await supabaseAdmin
-    .from('enrollments')
-    .insert({
-      profile_id: profileId,
-      stripe_session_id: sessionId,
-      stripe_customer_id: stripeCustomerId,
-      price_id: Z2Q_PRICE_ID,
-      product_id: Z2Q_PRODUCT_ID,
-      amount_paid: amountPaid,
-      currency: session.currency || 'usd',
-      payment_status: 'paid',
-      enrolled_at: new Date().toISOString(),
-      orientation_completed_at: null,
-      credit_rebound_eligible: false,
-      credit_rebound_type: null,
-      foundation_completed_at: null,
-      specialization_started_at: null,
-    })
-    .select('id')
-    .single();
-
-  if (enrollmentError) {
-    // Handle duplicate (idempotency via unique constraint)
-    if (enrollmentError.code === '23505') {
-      console.log(`[Checkout] Enrollment already exists (unique constraint)`);
-      const { data: existingEnroll } = await supabaseAdmin
-        .from('enrollments')
-        .select('id')
-        .eq('stripe_session_id', sessionId)
-        .single();
-      
-      return { 
-        status: 'already_processed', 
-        profile_id: profileId,
-        enrollment_id: existingEnroll?.id,
-      };
-    }
-    throw enrollmentError;
-  }
-
-  console.log(`[Checkout] Created enrollment: ${enrollment.id}`);
-
-  // ===========================================================================
-  // STEP 3: Log Payment Transaction
-  // ===========================================================================
-
-  await supabaseAdmin
-    .from('payment_transactions')
-    .insert({
-      profile_id: profileId,
-      enrollment_id: enrollment.id,
-      stripe_session_id: sessionId,
-      stripe_customer_id: stripeCustomerId,
-      amount: amountPaid,
-      currency: session.currency || 'usd',
-      status: 'completed',
-      transaction_type: 'enrollment',
-      created_at: new Date().toISOString(),
-    })
-    .catch((err) => console.error('[Checkout] Transaction log error:', err));
-
-  // ===========================================================================
-  // STEP 4: Send Welcome Email
-  // ===========================================================================
-
+export async function GET(request: NextRequest) {
   try {
-    await sendWelcomeEmail(customerEmail, customerName, new Date().toISOString());
-    console.log(`[Checkout] Welcome email sent to ${customerEmail}`);
-  } catch (emailError) {
-    // Don't fail the webhook if email fails
-    console.error('[Checkout] Welcome email error:', emailError);
-  }
+    // Ping n8n to verify connectivity (with short timeout)
+    const healthCheck = await fetch(N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        student_id: 'health-check',
+        message: 'ping',
+        current_lesson: 'health-check',
+        knowledge_level: '0',
+      }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => null);
 
-  // ===========================================================================
-  // SUCCESS
-  // ===========================================================================
-
-  return {
-    status: 'success',
-    profile_id: profileId,
-    enrollment_id: enrollment.id,
-  };
-}
-
-// =============================================================================
-// REFUND HANDLER
-// =============================================================================
-
-async function handleRefund(charge: Stripe.Charge): Promise<void> {
-  const stripeCustomerId = typeof charge.customer === 'string' 
-    ? charge.customer 
-    : charge.customer?.id;
-
-  if (!stripeCustomerId) {
-    console.log('[Refund] No customer ID in charge');
-    return;
-  }
-
-  // Find enrollment by customer ID
-  const { data: enrollment } = await supabaseAdmin
-    .from('enrollments')
-    .select('id, profile_id')
-    .eq('stripe_customer_id', stripeCustomerId)
-    .maybeSingle();
-
-  if (enrollment) {
-    // Update enrollment status
-    await supabaseAdmin
-      .from('enrollments')
-      .update({ payment_status: 'refunded' })
-      .eq('id', enrollment.id);
-
-    // Log refund transaction
-    await supabaseAdmin
-      .from('payment_transactions')
-      .insert({
-        profile_id: enrollment.profile_id,
-        enrollment_id: enrollment.id,
-        stripe_charge_id: charge.id,
-        stripe_customer_id: stripeCustomerId,
-        amount: (charge.amount_refunded || 0) / 100,
-        currency: charge.currency,
-        status: 'refunded',
-        transaction_type: 'refund',
-        created_at: new Date().toISOString(),
-      });
-
-    console.log(`[Refund] Processed refund for enrollment ${enrollment.id}`);
+    return NextResponse.json({
+      status: healthCheck?.ok ? 'ok' : 'degraded',
+      endpoint: 'https://uw.sayada.ai/z2q/api/tutor',
+      n8n_url: N8N_WEBHOOK_URL,
+      n8n_reachable: healthCheck?.ok || false,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return NextResponse.json({
+      status: 'error',
+      endpoint: 'https://uw.sayada.ai/z2q/api/tutor',
+      n8n_url: N8N_WEBHOOK_URL,
+      n8n_reachable: false,
+      error: 'Health check failed',
+      timestamp: new Date().toISOString(),
+    });
   }
 }
-
-// =============================================================================
-// WELCOME EMAIL (via Resend)
-// =============================================================================
-
-async function sendWelcomeEmail(
-  email: string,
-  name: string,
-  enrollmentDate: string
-): Promise<void> {
-  if (!RESEND_API_KEY) {
-    console.warn('[Email] RESEND_API_KEY not configured, skipping email');
-    return;
-  }
-
-  const html = generateWelcomeEmailHtml({
-    studentName: name,
-    enrollmentDate: new Date(enrollmentDate).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    }),
-    dashboardUrl: Z2Q_URLS.dashboard,
-  });
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: 'Z2Q Academy <hello@uw.sayada.ai>',
-      to: email,
-      subject: 'Welcome to Z2Q | Your Quantum Journey Begins',
-      html,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Resend API error: ${error}`);
-  }
-}
-
-// =============================================================================
-// EXPORT CONFIG (Next.js 15)
-// =============================================================================
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';

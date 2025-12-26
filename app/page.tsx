@@ -1,18 +1,92 @@
 'use client';
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // =============================================================================
 // Z2Q INITIATIVE LANDING PAGE
 // Brand: Unconventional Wisdom | Powered by Sayada.ai
 // Aesthetic: Quiet Luxury / Minimalist Academic / Technological Conservative
+// Stripe Integration: price_1Si3mNI3wsIEE2uCkXfbxAvJ
 // =============================================================================
 
 export default function Z2QLandingPage() {
   const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const [activeSpecialization, setActiveSpecialization] = useState(0);
+  
+  // Checkout State
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [alreadyEnrolled, setAlreadyEnrolled] = useState(false);
+
+  // Check URL params for canceled checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('canceled') === 'true') {
+      setCheckoutError('Checkout was canceled. Ready to try again when you are.');
+      // Clean up URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  // ==========================================================================
+  // STRIPE CHECKOUT HANDLER
+  // ==========================================================================
+  const handleCheckout = async () => {
+    setIsCheckingOut(true);
+    setCheckoutError(null);
+
+    try {
+      // Check if already enrolled (if email provided)
+      if (email) {
+        const checkResponse = await fetch(`/api/checkout?email=${encodeURIComponent(email)}`);
+        const checkData = await checkResponse.json();
+        
+        if (checkData.enrolled) {
+          setAlreadyEnrolled(true);
+          setIsCheckingOut(false);
+          return;
+        }
+      }
+
+      // Create Stripe Checkout Session
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email || undefined,
+          name: fullName || undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.status === 'already_enrolled') {
+        setAlreadyEnrolled(true);
+        setIsCheckingOut(false);
+        return;
+      }
+
+      if (data.url) {
+        // Redirect to Stripe Checkout
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      setCheckoutError(error.message || 'Something went wrong. Please try again.');
+      setIsCheckingOut(false);
+    }
+  };
+
+  // Handle direct checkout (skip modal)
+  const handleDirectCheckout = () => {
+    setShowEnrollModal(true);
+  };
 
   const specializations = [
     {
@@ -122,12 +196,12 @@ export default function Z2QLandingPage() {
               Master quantum computing in 12 months. No PhD required.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <a
-                href="#enroll"
+              <button
+                onClick={handleDirectCheckout}
                 className="px-8 py-4 bg-gold text-obsidian font-semibold text-lg rounded hover:bg-gold-light transition-all hover:shadow-lg hover:shadow-gold/20"
               >
                 Begin Your Quantum Journey
-              </a>
+              </button>
               <a
                 href="#whitepaper"
                 className="px-8 py-4 border border-gold/50 text-gold font-semibold text-lg rounded hover:border-gold hover:bg-gold/5 transition-all"
@@ -501,14 +575,15 @@ export default function Z2QLandingPage() {
                 Private community access
               </li>
             </ul>
-            <a
-              href="#enroll"
-              className="block w-full bg-gold text-obsidian font-semibold py-4 rounded text-lg hover:bg-gold-light transition-colors"
+            <button
+              onClick={handleDirectCheckout}
+              disabled={isCheckingOut}
+              className="block w-full bg-gold text-obsidian font-semibold py-4 rounded text-lg hover:bg-gold-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Enroll in the Z2Q Initiative
-            </a>
+              {isCheckingOut ? 'Preparing Checkout...' : 'Enroll in the Z2Q Initiative'}
+            </button>
             <p className="text-ivory/40 text-xs mt-4">
-              Secure checkout • Satisfaction guarantee
+              Secure checkout via Stripe • 30-day satisfaction guarantee
             </p>
           </div>
         </div>
@@ -608,6 +683,167 @@ export default function Z2QLandingPage() {
           </div>
         </div>
       </footer>
+
+      {/* ===== ENROLLMENT MODAL ===== */}
+      <AnimatePresence>
+        {showEnrollModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-obsidian/95 backdrop-blur-sm p-4"
+            onClick={() => !isCheckingOut && setShowEnrollModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-obsidian border border-charcoal rounded-lg shadow-2xl"
+            >
+              {/* Already Enrolled State */}
+              {alreadyEnrolled ? (
+                <div className="p-8 text-center">
+                  <div className="w-16 h-16 bg-green-800/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <span className="text-4xl">✓</span>
+                  </div>
+                  <h3 className="font-display text-2xl text-ivory mb-4">You're Already Enrolled!</h3>
+                  <p className="text-ivory/60 mb-8">
+                    Welcome back. Your quantum journey awaits in your dashboard.
+                  </p>
+                  <a
+                    href="/dashboard"
+                    className="block w-full bg-gold text-obsidian font-semibold py-4 rounded text-lg hover:bg-gold-light transition-colors"
+                  >
+                    Go to Dashboard
+                  </a>
+                  <button
+                    onClick={() => {
+                      setAlreadyEnrolled(false);
+                      setShowEnrollModal(false);
+                    }}
+                    className="mt-4 text-ivory/50 hover:text-ivory text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Modal Header */}
+                  <div className="p-6 border-b border-charcoal">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-gold tracking-widest text-xs mb-1">Z2Q INITIATIVE</p>
+                        <h3 className="font-display text-xl text-ivory">Secure Enrollment</h3>
+                      </div>
+                      <button
+                        onClick={() => !isCheckingOut && setShowEnrollModal(false)}
+                        className="text-ivory/40 hover:text-ivory text-2xl"
+                        disabled={isCheckingOut}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="p-6">
+                    {/* Error Message */}
+                    {checkoutError && (
+                      <div className="mb-6 p-4 bg-red-900/20 border border-red-800/50 rounded">
+                        <p className="text-red-400 text-sm">{checkoutError}</p>
+                      </div>
+                    )}
+
+                    {/* Price Display */}
+                    <div className="bg-charcoal/30 p-4 rounded mb-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-ivory font-semibold">Z2Q Full Program</p>
+                          <p className="text-ivory/50 text-sm">12 Months • All Specializations</p>
+                        </div>
+                        <p className="font-display text-3xl text-gold">$997</p>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-charcoal flex items-center gap-2">
+                        <span className="text-green-500">→</span>
+                        <span className="text-sm text-green-400">$300 Credit Rebound on completion</span>
+                      </div>
+                    </div>
+
+                    {/* Optional: Collect info for Stripe prefill */}
+                    <div className="space-y-4 mb-6">
+                      <div>
+                        <label className="text-sm text-ivory/60 block mb-2">Name (optional)</label>
+                        <input
+                          type="text"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="Your name"
+                          className="w-full bg-charcoal/50 border border-charcoal rounded px-4 py-3 text-ivory placeholder:text-ivory/30 focus:border-gold focus:outline-none transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-ivory/60 block mb-2">Email (optional)</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="you@company.com"
+                          className="w-full bg-charcoal/50 border border-charcoal rounded px-4 py-3 text-ivory placeholder:text-ivory/30 focus:border-gold focus:outline-none transition-colors"
+                        />
+                        <p className="text-ivory/40 text-xs mt-1">
+                          Pre-fill your checkout for faster enrollment
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Checkout Button */}
+                    <button
+                      onClick={handleCheckout}
+                      disabled={isCheckingOut}
+                      className="w-full bg-gold text-obsidian font-semibold py-4 rounded text-lg hover:bg-gold-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isCheckingOut ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                              fill="none"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
+                          </svg>
+                          <span>Redirecting to Checkout...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Proceed to Secure Checkout</span>
+                          <span>→</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Trust Badges */}
+                    <div className="mt-4 flex items-center justify-center gap-4 text-ivory/40 text-xs">
+                      <span>🔒 SSL Encrypted</span>
+                      <span>•</span>
+                      <span>💳 Powered by Stripe</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
