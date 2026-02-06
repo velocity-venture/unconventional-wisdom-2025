@@ -51,3 +51,8 @@ next-env.d.ts
 *.pem
 *.key
 *.cert
+
+# Secrets / tokens
+*access*token*
+*secret*
+*.txt.bak
